@@ -1,67 +1,56 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import joblib
+import pickle
 import os
 
-app = FastAPI(title="Nuclear AI - ARCS Enterprise v2.0")
+app = FastAPI()
 
-# --- SECURITY SETTINGS (CORS) ---
-# This allows your Netlify site to talk to this backend
-origins = [
-    "https://nuclearaiphase1.netlify.app",
-    "http://localhost:3000",
-    "https://nuclear-ai.onrender.com"]
-
+# 1. OPEN ALL GATES (Temporary for testing)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load the AI Brain
-model = joblib.load('model.pkl')
-
-class AdvancedReactorData(BaseModel):
-    temp: float
-    pressure: float
-    vibration: float
-    radiation: float
-    coolant_flow: float
+# 2. LOAD MODEL SAFELY
+model = None
+try:
+    if os.path.exists("model.pkl"):
+        with open("model.pkl", "rb") as f:
+            model = pickle.load(f)
+    else:
+        print("Warning: model.pkl not found!")
+except Exception as e:
+    print(f"Error loading model: {e}")
 
 @app.get("/")
-def status():
-    return {"status": "Nuclear AI Online", "version": "2.0"}
+def health_check():
+    return {"status": "online", "message": "Nuclear AI Backend is reaching the frontend"}
 
 @app.post("/predict")
-def predict_status(data: dict):  # We use 'dict' to accept all incoming fields
+async def predict_status(data: dict):
+    # This 'dict' ensures we don't get 422 errors
     try:
-        # 1. Print the data to the Render logs so you can see what is coming in
-        print(f"Incoming Simulation Data: {data}")
+        # Extract only what the model needs, providing defaults if missing
+        temp = float(data.get('temp', 300))
+        press = float(data.get('pressure', 15.0))
+        vib = float(data.get('vibration', 0.1))
+        rad = float(data.get('radiation', 100))
+        flow = float(data.get('coolant_flow', 17000))
 
-        # 2. Extract the specific 5 fields your model needs to run
-        # We use .get() to avoid crashing if a field is missing
-        features = [[
-            data.get('temp', 0),
-            data.get('pressure', 0),
-            data.get('vibration', 0),
-            data.get('radiation', 0),
-            data.get('coolant_flow', 0)
-        ]]
-
-        # 3. Run the AI prediction
-        prediction = model.predict(features)
-        prob = model.predict_proba(features)[0][prediction[0]] * 100
-
-        result = "CRITICAL: MELTDOWN RISK" if prediction[0] == 1 else "STABLE"
+        if model:
+            features = [[temp, press, vib, rad, flow]]
+            prediction = model.predict(features)
+            result = "CRITICAL" if prediction[0] == 1 else "STABLE"
+        else:
+            result = "Model not loaded, but connection successful!"
 
         return {
             "status": "success",
             "analysis": result,
-            "confidence_level": f"{prob:.2f}%",
-            "received_fields": list(data.keys()) # Shows you what the UI sent
+            "received_data": data  # This helps us see what the UI sent
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
